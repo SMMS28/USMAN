@@ -1,90 +1,53 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const mongoose = require('mongoose');
-const User = require('../models/User');
-const db = require('../models/InMemoryDB');
+const crypto = require('crypto');
+const sqlDatabase = require('../models/Database');
 const router = express.Router();
-
-// Check if MongoDB is connected
-const isMongoConnected = mongoose.connection.readyState === 1;
 
 // Register
 router.post('/register', async (req, res) => {
   try {
     const { name, email, password, location, bio } = req.body;
 
-    if (isMongoConnected) {
-      // Use MongoDB
-      const existingUser = await User.findOne({ email });
-      if (existingUser) {
-        return res.status(400).json({ message: 'User already exists' });
-      }
-
-      const user = new User({
-        name,
-        email,
-        password,
-        location,
-        bio
-      });
-
-      await user.save();
-
-      const token = jwt.sign(
-        { userId: user._id },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      res.status(201).json({
-        message: 'User created successfully',
-        token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          location: user.location,
-          points: user.points
-        }
-      });
-    } else {
-      // Use in-memory database
-      const existingUser = db.findUserByEmail(email);
-      if (existingUser) {
-        return res.status(400).json({ message: 'User already exists' });
-      }
-
-      const user = db.createUser({
-        name,
-        email,
-        password, // In real app, this should be hashed
-        location,
-        bio,
-        points: 100,
-        skillsOffered: [],
-        skillsWanted: [],
-        rating: { average: 0, count: 0 },
-        preferences: { learningMode: 'Both', maxDistance: 10 }
-      });
-
-      const token = jwt.sign(
-        { userId: user._id },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      res.status(201).json({
-        message: 'User created successfully',
-        token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          location: user.location,
-          points: user.points
-        }
-      });
+    // Check if user already exists
+    const existingUser = await sqlDatabase.findUserByEmail(email);
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
     }
+
+    // Create new user
+    const user = await sqlDatabase.createUser({
+      name,
+      email,
+      password, // In production, this should be hashed
+      location,
+      bio
+    });
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET || 'skillswap-secret-key',
+      { expiresIn: '7d' }
+    );
+
+    // Return success response
+    res.status(201).json({
+      message: 'User created successfully',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        location: user.location,
+        points: user.points,
+        skillsOffered: user.skillsOffered || [],
+        skillsWanted: user.skillsWanted || [],
+        bio: user.bio || '',
+        preferences: { learningMode: 'Both', maxDistance: 10 },
+        rating: { average: 0, count: 0 }
+      }
+    });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
@@ -95,64 +58,47 @@ router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    if (isMongoConnected) {
-      // Use MongoDB
-      const user = await User.findOne({ email });
-      if (!user) {
-        return res.status(400).json({ message: 'Invalid credentials' });
-      }
-
-      const isMatch = await user.comparePassword(password);
-      if (!isMatch) {
-        return res.status(400).json({ message: 'Invalid credentials' });
-      }
-
-      const token = jwt.sign(
-        { userId: user._id },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      res.json({
-        message: 'Login successful',
-        token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          location: user.location,
-          points: user.points,
-          skillsOffered: user.skillsOffered,
-          skillsWanted: user.skillsWanted
-        }
-      });
-    } else {
-      // Use in-memory database
-      const user = db.findUserByEmail(email);
-      if (!user || user.password !== password) {
-        return res.status(400).json({ message: 'Invalid credentials' });
-      }
-
-      const token = jwt.sign(
-        { userId: user._id },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      );
-
-      res.json({
-        message: 'Login successful',
-        token,
-        user: {
-          id: user._id,
-          name: user.name,
-          email: user.email,
-          location: user.location,
-          points: user.points,
-          skillsOffered: user.skillsOffered,
-          skillsWanted: user.skillsWanted
-        }
-      });
+    // Find user by email
+    const user = await sqlDatabase.findUserByEmail(email);
+    if (!user || user.password !== password) {
+      return res.status(400).json({ message: 'Invalid credentials' });
     }
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user.id },
+      process.env.JWT_SECRET || 'skillswap-secret-key',
+      { expiresIn: '7d' }
+    );
+
+    // Return success response
+    res.json({
+      message: 'Login successful',
+      token,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        location: user.location,
+        points: user.points,
+        skillsOffered: user.skillsOffered || [],
+        skillsWanted: user.skillsWanted || [],
+        bio: user.bio || '',
+        preferences: { learningMode: 'Both', maxDistance: 10 },
+        rating: user.rating || { average: 0, count: 0 }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Password Reset (Placeholder for future implementation)
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    // In production, implement email sending logic
+    res.json({ message: 'Password reset instructions sent to email' });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
